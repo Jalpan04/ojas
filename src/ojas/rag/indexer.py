@@ -62,7 +62,9 @@ def index_workspace(
     # Use a fresh collection each run so stale files are cleaned up.
     try:
         client.delete_collection(COLLECTION_NAME)
-    except ValueError:
+    except Exception:
+        # Collection may not exist on first run (NotFoundError in newer
+        # ChromaDB versions, ValueError in older ones).
         pass
 
     embedder = get_embeddings(model=embed_model, base_url=ollama_url)

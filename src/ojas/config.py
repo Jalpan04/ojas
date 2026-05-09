@@ -11,6 +11,7 @@ On startup Ojas:
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, field
 
@@ -137,13 +138,18 @@ def _pull_model(model_name: str, base_url: str = OLLAMA_BASE_URL) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _find_coder(models: list[ModelInfo]) -> str | None:
-    """Find the best Qwen coder variant from *models*."""
-    names_lower = {m.name.lower(): m.name for m in models}
+def _find_coder(
+    models: list[ModelInfo],
+    max_size_bytes: int | None = None,
+) -> str | None:
+    """Find the best Qwen coder variant from *models* that fits in RAM."""
+    names_lower = {m.name.lower(): m for m in models}
     for pattern in PREFERRED_CODER_PATTERNS:
-        for lower_name, orig_name in names_lower.items():
+        for lower_name, model_info in names_lower.items():
             if pattern in lower_name:
-                return orig_name
+                if max_size_bytes is not None and model_info.size_bytes * 1.15 > max_size_bytes:
+                    continue  # too large for available RAM
+                return model_info.name
     return None
 
 
@@ -155,13 +161,69 @@ def _find_embed(models: list[ModelInfo]) -> str | None:
     return None
 
 
-def _find_planner(models: list[ModelInfo], exclude: str | None = None) -> str | None:
-    """Return the name of the largest non-embedding model."""
+def _get_available_ram_bytes() -> int | None:
+    """Return available system RAM in bytes, or None if unknown."""
+    try:
+        import psutil  # type: ignore[import-untyped]
+        return psutil.virtual_memory().available
+    except ImportError:
+        pass
+    # Fallback: try Windows-specific approach via os.
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(stat)
+        kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+        return stat.ullAvailPhys
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _find_planner(
+    models: list[ModelInfo],
+    exclude: str | None = None,
+    max_size_bytes: int | None = None,
+) -> str | None:
+    """Return the name of the largest non-embedding model that fits in RAM.
+
+    Parameters
+    ----------
+    models:
+        All available Ollama models.
+    exclude:
+        Model name to exclude (typically the coder model).
+    max_size_bytes:
+        If provided, models whose ``size_bytes`` exceeds this value are
+        skipped.  This prevents selecting a model that the system cannot
+        actually load.
+    """
     candidates = [
         m
         for m in models
         if "embed" not in m.name.lower() and m.name != exclude
     ]
+    if max_size_bytes is not None:
+        # Filter out models too large for available RAM.
+        # Use a 1.15x multiplier to account for Ollama runtime overhead.
+        fitting = [m for m in candidates if m.size_bytes * 1.15 <= max_size_bytes]
+        if fitting:
+            candidates = fitting
+        else:
+            # None of the non-coder models fit -- caller will fall back.
+            return None
     if not candidates:
         return None
     candidates.sort(key=lambda m: m.param_count_estimate, reverse=True)
@@ -208,26 +270,52 @@ def auto_configure(workspace: str = ".") -> OjasConfig:
         )
         sys.exit(1)
 
-    # -- Step 3: Assign coder -----------------------------------------------
-    coder = _find_coder(cfg.available_models)
+    # -- Step 3: Detect available RAM (used for steps 4+5) --------------------
+    available_ram = _get_available_ram_bytes()
+    if available_ram is not None:
+        ram_gb = available_ram / (1024 ** 3)
+        console.print(f"  Available RAM: [cyan]{ram_gb:.1f} GiB[/]")
+
+    # -- Step 4: Assign coder (memory-aware) ---------------------------------
+    coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
     if coder is None:
-        console.print(
-            "  [yellow]No Qwen coder model found. "
-            "Pulling qwen2.5-coder:7b ...[/]"
+        # No Qwen coder fits -- try to find ANY non-embed model that fits.
+        coder = _find_planner(
+            cfg.available_models,
+            exclude=None,
+            max_size_bytes=available_ram,
         )
-        if _pull_model("qwen2.5-coder:7b", cfg.ollama_base_url):
-            cfg.available_models = _list_models(cfg.ollama_base_url)
-            coder = _find_coder(cfg.available_models)
+        if coder:
+            console.print(
+                f"  [yellow]No Qwen coder fits in RAM. "
+                f"Using {coder} for code generation.[/]"
+            )
+        else:
+            console.print(
+                "  [yellow]No coder model found. "
+                "Pulling qwen2.5-coder:7b ...[/]"
+            )
+            if _pull_model("qwen2.5-coder:7b", cfg.ollama_base_url):
+                cfg.available_models = _list_models(cfg.ollama_base_url)
+                coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
     cfg.coder_model = coder or ""
 
-    # -- Step 4: Assign planner ---------------------------------------------
-    planner = _find_planner(cfg.available_models, exclude=cfg.coder_model)
+    # -- Step 5: Assign planner (memory-aware) --------------------------------
+    planner = _find_planner(
+        cfg.available_models,
+        exclude=cfg.coder_model,
+        max_size_bytes=available_ram,
+    )
     if planner is None:
-        # Fallback: use coder for both roles
+        # No separate planner fits -- use coder for both roles.
         planner = cfg.coder_model
+        console.print(
+            "  [yellow]No separate planner model fits in RAM. "
+            "Using coder model for both roles.[/]"
+        )
     cfg.planner_model = planner or ""
 
-    # -- Step 5: Verify embedding model -------------------------------------
+    # -- Step 6: Verify embedding model -------------------------------------
     embed = _find_embed(cfg.available_models)
     if embed is None:
         console.print(
@@ -238,7 +326,7 @@ def auto_configure(workspace: str = ".") -> OjasConfig:
             embed = _find_embed(cfg.available_models)
     cfg.embed_model = embed or REQUIRED_EMBED_MODEL
 
-    # -- Step 6: Report ------------------------------------------------------
+    # -- Step 7: Report ------------------------------------------------------
     if not cfg.is_valid:
         console.print(
             "[bold red]ERROR:[/] Could not resolve all required models.\n"

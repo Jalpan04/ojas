@@ -39,7 +39,7 @@ from ojas.memory.checkpoint import get_checkpointer
 from ojas.nodes.coder import make_coder_node
 from ojas.nodes.dependency import dependency_node
 from ojas.nodes.evaluator import evaluator_node, should_retry
-from ojas.nodes.executor import executor_node
+from ojas.nodes.executor import make_executor_node
 from ojas.nodes.planner import make_planner_node
 from ojas.nodes.retrieval import make_retrieval_node
 from ojas.state import OjasState
@@ -72,6 +72,10 @@ def build_graph(
     planner = make_planner_node(
         model_name=config.planner_model,
         ollama_url=config.ollama_base_url,
+        fallback_model=config.coder_model,
+    )
+    executor = make_executor_node(
+        workspace_dir=config.workspace,
     )
     coder = make_coder_node(
         model_name=config.coder_model,
@@ -85,7 +89,7 @@ def build_graph(
     graph.add_node("planner", planner)
     graph.add_node("coder", coder)
     graph.add_node("dependency", dependency_node)
-    graph.add_node("executor", executor_node)
+    graph.add_node("executor", executor)
     graph.add_node("evaluator", evaluator_node)
 
     # -- Wire edges ----------------------------------------------------------

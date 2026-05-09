@@ -73,7 +73,15 @@ def make_coder_node(
                 )
             )
 
-        response = llm.invoke(messages)
+        try:
+            response = llm.invoke(messages)
+        except Exception as exc:  # noqa: BLE001
+            error_msg = f"Coder model error: {exc}"
+            return {
+                "generated_code": "",
+                "cycle_complete": True,
+                "messages": [AIMessage(content=f"[CODE]\n{error_msg}")],
+            }
         raw = response.content if hasattr(response, "content") else str(response)
         code = _extract_code(raw)
 

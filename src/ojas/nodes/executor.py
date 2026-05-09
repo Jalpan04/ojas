@@ -3,11 +3,12 @@
 Lifecycle:
 1. Creates an ephemeral ``python:3.11-slim`` container.
 2. Mounts a persistent named volume (``ojas-pip-cache``) at
-   ``/root/.cache/pip`` for dependency caching.
-3. Installs any required pip packages.
-4. Writes the generated script into the container.
-5. Executes the script and captures stdout + stderr.
-6. Destroys the container.
+   ``/root/.cache/ojas_pkgs`` for dependency caching.
+3. Mounts the workspace at ``/workspace`` for file access.
+4. Installs any required pip packages (cached across runs).
+5. Writes the generated script into the workspace, executes it,
+   and captures stdout + stderr.
+6. Cleans up the container and temp file.
 """
 
 from __future__ import annotations
@@ -21,16 +22,25 @@ from ojas.tools.docker_exec import run_in_sandbox
 console = Console()
 
 
-def executor_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Execute the generated code in a Docker sandbox."""
-    code = state.get("generated_code", "")
-    if not code:
-        return {"docker_output": "", "cycle_complete": True}
+def make_executor_node(workspace_dir: str):
+    """Return an executor node function bound to the given workspace."""
 
-    deps = state.get("dependencies", [])
+    def executor_node(state: dict[str, Any]) -> dict[str, Any]:
+        """Execute the generated code in a Docker sandbox."""
+        code = state.get("generated_code", "")
+        if not code:
+            return {"docker_output": "", "cycle_complete": True}
 
-    console.print("  [dim]Spinning up Docker sandbox ...[/]")
-    output = run_in_sandbox(code=code, dependencies=deps)
-    console.print("  [dim]Sandbox execution complete.[/]")
+        deps = state.get("dependencies", [])
 
-    return {"docker_output": output}
+        console.print("  [dim]Spinning up Docker sandbox ...[/]")
+        output = run_in_sandbox(
+            code=code,
+            dependencies=deps,
+            workspace_dir=workspace_dir,
+        )
+        console.print("  [dim]Sandbox execution complete.[/]")
+
+        return {"docker_output": output}
+
+    return executor_node

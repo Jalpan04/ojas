@@ -12,6 +12,21 @@ import uuid
 from functools import partial
 from typing import Any
 
+# Force UTF-8 output on Windows to prevent cp1252 encoding errors
+# when Rich renders Markdown with special Unicode characters.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
 import click
 from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
@@ -43,7 +58,7 @@ OJAS_THEME = Theme(
     }
 )
 
-console = Console(theme=OJAS_THEME)
+console = Console(theme=OJAS_THEME, force_terminal=True)
 
 # ---------------------------------------------------------------------------
 # Banner
@@ -97,15 +112,27 @@ def _render_agent_message(content: str) -> None:
         style = "bright_cyan"
 
     console.print()
-    console.print(
-        Panel(
-            Markdown(body),
-            title=f"[bold]{label}[/]",
-            border_style=style,
-            expand=True,
-            padding=(1, 2),
+    try:
+        console.print(
+            Panel(
+                Markdown(body),
+                title=f"[bold]{label}[/]",
+                border_style=style,
+                expand=True,
+                padding=(1, 2),
+            )
         )
-    )
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # Fallback: render as plain text if Markdown causes encoding issues.
+        console.print(
+            Panel(
+                body,
+                title=f"[bold]{label}[/]",
+                border_style=style,
+                expand=True,
+                padding=(1, 2),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

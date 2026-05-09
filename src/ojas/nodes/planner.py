@@ -2,6 +2,8 @@
 
 The planner receives the user request plus RAG context and produces a
 step-by-step architectural plan that the Coder node will implement.
+
+If the planner model fails (e.g., OOM), it falls back to the coder model.
 """
 
 from __future__ import annotations
@@ -10,6 +12,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_ollama import ChatOllama
+from rich.console import Console
+
+console = Console()
 
 PLANNER_SYSTEM_PROMPT = """\
 You are the Planner inside Ojas, an autonomous AI developer agent.
@@ -35,14 +40,28 @@ Guidelines:
 def make_planner_node(
     model_name: str,
     ollama_url: str = "http://localhost:11434",
+    fallback_model: str | None = None,
 ):
-    """Return a planner node function bound to the given model."""
+    """Return a planner node function bound to the given model.
 
-    llm = ChatOllama(
-        model=model_name,
-        base_url=ollama_url,
-        temperature=0.3,
-    )
+    Parameters
+    ----------
+    model_name:
+        Primary planner model name.
+    ollama_url:
+        Ollama API base URL.
+    fallback_model:
+        If the primary model fails (e.g., OOM), fall back to this model.
+    """
+
+    def _make_llm(name: str) -> ChatOllama:
+        return ChatOllama(
+            model=name,
+            base_url=ollama_url,
+            temperature=0.3,
+        )
+
+    primary_llm = _make_llm(model_name)
 
     def planner_node(state: dict[str, Any]) -> dict[str, Any]:
         """Invoke the planner model and append its plan to messages."""
@@ -62,7 +81,23 @@ def make_planner_node(
         # Build the message list: system + conversation history.
         messages = [system] + list(state.get("messages", []))
 
-        response = llm.invoke(messages)
+        # Try the primary model first; fall back on failure.
+        llm = primary_llm
+        used_model = model_name
+        try:
+            response = llm.invoke(messages)
+        except Exception as exc:  # noqa: BLE001
+            if fallback_model and fallback_model != model_name:
+                console.print(
+                    f"  [yellow]Planner model failed ({exc}). "
+                    f"Falling back to {fallback_model}.[/]"
+                )
+                llm = _make_llm(fallback_model)
+                used_model = fallback_model
+                response = llm.invoke(messages)
+            else:
+                raise
+
         plan_text = response.content if hasattr(response, "content") else str(response)
 
         return {
