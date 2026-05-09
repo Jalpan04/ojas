@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ojas-agent"
+version = "0.1.0"
+description = "The Local-First, Autonomous AI Developer"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Ojas Team" },
+]
+keywords = ["ai", "agent", "coding", "langgraph", "ollama", "local"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "langchain>=0.3.0",
+    "langgraph>=0.2.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-community>=0.3.0",
+    "chromadb>=0.5.0",
+    "docker>=7.0.0",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+    "gitpython>=3.1.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+ojas = "ojas.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ojas"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ojas"]
