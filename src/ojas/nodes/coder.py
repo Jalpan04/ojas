@@ -44,6 +44,7 @@ def _extract_code(text: str) -> str:
 def make_coder_node(
     model_name: str,
     ollama_url: str = "http://localhost:11434",
+    workspace_dir: str = ".",
 ):
     """Return a coder node function bound to the Qwen model."""
 
@@ -52,10 +53,34 @@ def make_coder_node(
         base_url=ollama_url,
         temperature=0.1,
     )
+    
+    from ojas.mcp_client import load_mcp_tools
+    mcp_tools = load_mcp_tools(workspace_dir)
+    if mcp_tools:
+        import sys
+        try:
+            llm = llm.bind_tools(mcp_tools)
+        except Exception as e:
+            print(f"  [ojas.warn]Could not bind MCP tools to coder model: {e}[/]", file=sys.stderr)
+
 
     def coder_node(state: dict[str, Any]) -> dict[str, Any]:
         """Generate (or fix) code based on the plan and any prior errors."""
-        system = SystemMessage(content=CODER_SYSTEM_PROMPT)
+        import os
+        
+        # Check for project-level instructions
+        project_rules = ""
+        for rule_file in [".ojas.md", ".cursorrules"]:
+            rule_path = os.path.join(workspace_dir, rule_file)
+            if os.path.exists(rule_path):
+                try:
+                    with open(rule_path, "r", encoding="utf-8") as f:
+                        project_rules = f"\n\n<project_rules>\n{f.read()}\n</project_rules>"
+                except Exception:
+                    pass
+                break
+
+        system = SystemMessage(content=CODER_SYSTEM_PROMPT + project_rules)
         messages = [system] + list(state.get("messages", []))
 
         # If there was a previous docker error, append it for context.
@@ -70,6 +95,14 @@ def make_coder_node(
                         f"```\n{docker_output}\n```\n"
                         "Please fix the code."
                     )
+                )
+            )
+        else:
+            from langchain_core.messages import HumanMessage
+            
+            messages.append(
+                HumanMessage(
+                    content="Now, please provide the exact Python code for the plan above."
                 )
             )
 

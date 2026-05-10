@@ -45,7 +45,7 @@ with sync_playwright() as p:
 
 
 @tool
-def search_web(query: str) -> str:
+def web_search_tool(query: str) -> str:
     """Search the web privately using a headless browser in Docker.
 
     Uses DuckDuckGo via Playwright inside an isolated container.
@@ -64,4 +64,4 @@ def search_web(query: str) -> str:
     )
 
 
-WEB_TOOLS = [search_web]
+WEB_TOOLS = [web_search_tool]

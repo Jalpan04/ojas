@@ -67,6 +67,8 @@ class OjasConfig:
 
     planner_model: str = ""
     coder_model: str = ""
+    reviewer_model: str = ""
+    agent_model: str = ""
     embed_model: str = REQUIRED_EMBED_MODEL
     ollama_base_url: str = OLLAMA_BASE_URL
     available_models: list[ModelInfo] = field(default_factory=list)
@@ -74,7 +76,13 @@ class OjasConfig:
 
     @property
     def is_valid(self) -> bool:
-        return bool(self.planner_model and self.coder_model and self.embed_model)
+        return bool(
+            self.planner_model
+            and self.coder_model
+            and self.reviewer_model
+            and self.agent_model
+            and self.embed_model
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -235,12 +243,25 @@ def _find_planner(
 # ---------------------------------------------------------------------------
 
 
-def auto_configure(workspace: str = ".") -> OjasConfig:
+def auto_configure(
+    workspace: str = ".",
+    ignore_ram: bool = False,
+    force_planner: str | None = None,
+    force_coder: str | None = None,
+    force_reviewer: str | None = None,
+    force_agent: str | None = None,
+) -> OjasConfig:
     """Run the full auto-boot sequence and return a resolved config.
 
     This is called once at startup by the CLI.
     """
     cfg = OjasConfig(workspace=workspace)
+
+    # 1. Check for explicit manual overrides first
+    planner_override = force_planner or os.environ.get("OJAS_PLANNER")
+    coder_override = force_coder or os.environ.get("OJAS_CODER")
+    reviewer_override = force_reviewer or os.environ.get("OJAS_REVIEWER")
+    agent_override = force_agent or os.environ.get("OJAS_AGENT")
 
     # -- Step 1: Ping Ollama -------------------------------------------------
     console.print()
@@ -271,51 +292,81 @@ def auto_configure(workspace: str = ".") -> OjasConfig:
         sys.exit(1)
 
     # -- Step 3: Detect available RAM (used for steps 4+5) --------------------
-    available_ram = _get_available_ram_bytes()
-    if available_ram is not None:
-        ram_gb = available_ram / (1024 ** 3)
-        console.print(f"  Available RAM: [cyan]{ram_gb:.1f} GiB[/]")
+    if ignore_ram or os.environ.get("OJAS_IGNORE_RAM", "false").lower() == "true":
+        available_ram = 1024 * 1024 * 1024 * 1024  # 1 TB (Bypass check)
+        console.print("  [yellow]Ignoring system RAM check (assuming GPU VRAM is sufficient).[/]")
+    else:
+        available_ram = _get_available_ram_bytes()
+        if available_ram is not None:
+            ram_gb = available_ram / (1024 ** 3)
+            console.print(f"  Available RAM: [cyan]{ram_gb:.1f} GiB[/]")
 
     # -- Step 4: Assign coder (memory-aware) ---------------------------------
-    coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
-    if coder is None:
-        # No Qwen coder fits -- try to find ANY non-embed model that fits.
-        coder = _find_planner(
-            cfg.available_models,
-            exclude=None,
-            max_size_bytes=available_ram,
-        )
-        if coder:
-            console.print(
-                f"  [yellow]No Qwen coder fits in RAM. "
-                f"Using {coder} for code generation.[/]"
+    if coder_override:
+        coder = coder_override
+        console.print(f"  [yellow]Using forced coder model:[/] {coder}")
+    else:
+        coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
+        if coder is None:
+            # No Qwen coder fits -- try to find ANY non-embed model that fits.
+            coder = _find_planner(
+                cfg.available_models,
+                exclude=None,
+                max_size_bytes=available_ram,
             )
-        else:
-            console.print(
-                "  [yellow]No coder model found. "
-                "Pulling qwen2.5-coder:7b ...[/]"
-            )
-            if _pull_model("qwen2.5-coder:7b", cfg.ollama_base_url):
-                cfg.available_models = _list_models(cfg.ollama_base_url)
-                coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
+            if coder:
+                console.print(
+                    f"  [yellow]No Qwen coder fits in RAM. "
+                    f"Using {coder} for code generation.[/]"
+                )
+            else:
+                console.print(
+                    "  [yellow]No coder model found. "
+                    "Pulling qwen2.5-coder:7b ...[/]"
+                )
+                if _pull_model("qwen2.5-coder:7b", cfg.ollama_base_url):
+                    cfg.available_models = _list_models(cfg.ollama_base_url)
+                    coder = _find_coder(cfg.available_models, max_size_bytes=available_ram)
     cfg.coder_model = coder or ""
 
     # -- Step 5: Assign planner (memory-aware) --------------------------------
-    planner = _find_planner(
-        cfg.available_models,
-        exclude=cfg.coder_model,
-        max_size_bytes=available_ram,
-    )
-    if planner is None:
-        # No separate planner fits -- use coder for both roles.
-        planner = cfg.coder_model
-        console.print(
-            "  [yellow]No separate planner model fits in RAM. "
-            "Using coder model for both roles.[/]"
+    if planner_override:
+        planner = planner_override
+        console.print(f"  [yellow]Using forced planner model:[/] {planner}")
+    else:
+        planner = _find_planner(
+            cfg.available_models,
+            exclude=cfg.coder_model,
+            max_size_bytes=available_ram,
         )
+        if planner is None:
+            # No separate planner fits -- use coder for both roles.
+            planner = cfg.coder_model
+            console.print(
+                "  [yellow]No separate planner model fits in RAM. "
+                "Using coder model for both roles.[/]"
+            )
     cfg.planner_model = planner or ""
 
-    # -- Step 6: Verify embedding model -------------------------------------
+    # -- Step 6: Assign reviewer --------------------------------------------
+    if reviewer_override:
+        reviewer = reviewer_override
+        console.print(f"  [yellow]Using forced reviewer model:[/] {reviewer}")
+    else:
+        # Default to planner model if no specific reviewer fits
+        reviewer = cfg.planner_model
+    cfg.reviewer_model = reviewer or ""
+
+    # -- Step 7: Assign agent -----------------------------------------------
+    if agent_override:
+        agent = agent_override
+        console.print(f"  [yellow]Using forced agent model:[/] {agent}")
+    else:
+        # Agent needs to be fast and good at tools, default to coder or planner
+        agent = cfg.coder_model or cfg.planner_model
+    cfg.agent_model = agent or ""
+
+    # -- Step 8: Verify embedding model -------------------------------------
     embed = _find_embed(cfg.available_models)
     if embed is None:
         console.print(
@@ -350,9 +401,11 @@ def _print_config_summary(cfg: OjasConfig) -> None:
     )
     table.add_column("Role", style="bold")
     table.add_column("Model", style="cyan")
-    table.add_row("Planner (reasoning)", cfg.planner_model)
-    table.add_row("Coder (generation)", cfg.coder_model)
-    table.add_row("Embeddings (RAG)", cfg.embed_model)
+    table.add_row("🧠 Agent (Tool Caller)", cfg.agent_model)
+    table.add_row("🏗️ Planner (Reasoning)", cfg.planner_model)
+    table.add_row("💻 Coder (Generation)", cfg.coder_model)
+    table.add_row("🔍 Reviewer (Evaluator)", cfg.reviewer_model)
+    table.add_row("📚 Embeddings (RAG)", cfg.embed_model)
     console.print(table)
     console.print(
         f"  Workspace: [bold]{cfg.workspace}[/]\n"
