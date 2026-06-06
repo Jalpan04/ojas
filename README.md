@@ -1,6 +1,6 @@
 # Ojas
 
-![GitHub top language](https://img.shields.io/github/languages/top/Jalpan04/ojas) ![GitHub repo size](https://img.shields.io/github/repo-size/Jalpan04/ojas) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org) [![LangChain](https://img.shields.io/badge/LangChain-1C3C3A?style=flat&logo=chainlink&logoColor=white)](https://www.langchain.com) [![LangGraph](https://img.shields.io/badge/LangGraph-121212?style=flat&logo=network&logoColor=white)](https://www.langchain.com/langgraph) [![Ollama](https://img.shields.io/badge/Ollama-000000?style=flat&logo=ollama&logoColor=white)](https://ollama.com) [![ChromaDB](https://img.shields.io/badge/ChromaDB-3F51B5?style=flat&logo=database&logoColor=white)](https://www.trychroma.com) [![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com) ![GitHub repo size](https://img.shields.io/github/repo-size/Jalpan04/ojas) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **The Local-First, Autonomous AI Developer**
 
