@@ -1,5 +1,7 @@
 # Ojas
 
+![GitHub top language](https://img.shields.io/github/languages/top/Jalpan04/ojas) ![GitHub repo size](https://img.shields.io/github/repo-size/Jalpan04/ojas) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 **The Local-First, Autonomous AI Developer**
 
 Ojas is an incredibly fast, highly capable AI agent that lives entirely on your local machine. Powered by LangChain, LangGraph, and Ollama, Ojas acts as an autonomous developer that can read your codebase, plan complex features, write code, manage its own dependencies, and execute scripts safely inside an isolated Docker sandbox.
